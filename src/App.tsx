@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState } from "react";
-import { NavLink, Outlet, Route, Routes } from "react-router-dom";
+import { NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import { useAuth } from "./context/AuthContext";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const AllReviewsPage = lazy(() => import("./pages/AllReviewsPage"));
@@ -20,6 +21,17 @@ const navigation = [
 
 function AppLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  async function handleLogout() {
+    try {
+      await logout();
+      navigate("/login");
+    } catch {
+      // Keep the current session visible when the server could not complete logout.
+    }
+  }
 
   return (
     <div className="app">
@@ -63,9 +75,13 @@ function AppLayout() {
               <span>Search games...</span>
               <kbd>⌘ K</kbd>
             </NavLink>
-            <NavLink to="/login" className="auth-nav-link">Log in</NavLink>
-            <NavLink to="/register" className="btn nav-signup">Sign up</NavLink>
-            <NavLink to="/profile" className="avatar" aria-label="Your profile">AR</NavLink>
+            {user ? <>
+              <button type="button" className="auth-nav-link" onClick={() => void handleLogout()}>Log out</button>
+              <NavLink to="/profile" className="avatar" aria-label="Your profile">{user.displayName.slice(0, 2).toUpperCase()}</NavLink>
+            </> : <>
+              <NavLink to="/login" className="auth-nav-link">Log in</NavLink>
+              <NavLink to="/register" className="btn nav-signup">Sign up</NavLink>
+            </>}
             <button
               type="button"
               className="menu-toggle"

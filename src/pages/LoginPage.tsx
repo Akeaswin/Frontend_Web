@@ -1,7 +1,20 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { games } from "../data/games";
+import { useAuth } from "../context/AuthContext";
+import { useState } from "react";
 
 function LoginPage() {
+  const { login, error, loading } = useAuth();
+  const navigate = useNavigate();
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setFormError(null); setSubmitting(true);
+    const values = new FormData(event.currentTarget);
+    try { await login(String(values.get("identifier")), String(values.get("password"))); navigate("/profile"); }
+    catch (e) { setFormError(e instanceof Error ? e.message : "Unable to sign in"); }
+    finally { setSubmitting(false); }
+  }
   return (
     <main className="auth-page">
       <section className="auth-art" aria-label="Welcome to GamerReview">
@@ -23,12 +36,12 @@ function LoginPage() {
           Sign in to find your library, share reviews, and keep up with the
           games you love.
         </p>
-        <form onSubmit={(event) => event.preventDefault()}>
+        <form onSubmit={handleSubmit}>
           <label>
-            Email address
+            Email or username
             <input
-              type="email"
-              name="email"
+              type="text"
+              name="identifier"
               autoComplete="email"
               placeholder="you@example.com"
               required
@@ -51,7 +64,8 @@ function LoginPage() {
             </label>
             <span>Password recovery coming soon</span>
           </div>
-          <button className="btn" type="submit">Log in</button>
+          {(formError || error) && <p role="alert" className="form-error">{formError || error}</p>}
+          <button className="btn" type="submit" disabled={submitting || loading}>{submitting ? "Signing in…" : "Log in"}</button>
         </form>
         <div className="auth-switch">
           New to GamerReview? <Link to="/register">Create an account</Link>
