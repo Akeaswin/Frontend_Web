@@ -1,134 +1,15 @@
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { games } from "../data/games";
-
-const reviews = [
-  {
-    name: "Maya Chen",
-    handle: "@mayaplays",
-    initials: "MC",
-    score: "9.5",
-    title: "A world worth getting lost in",
-    text: "It doesn't just build a beautiful world—it makes every corner feel consequential. The combat rewards patience, the story trusts its audience, and the score is extraordinary.",
-    tags: ["Gameplay", "Story", "Open World"],
-    time: "18 min ago",
-  },
-  {
-    name: "Theo Brooks",
-    handle: "@theob",
-    initials: "TB",
-    score: "9.0",
-    title: "An unforgettable adventure",
-    text: "The world rewards curiosity at every turn. It took a little time to find my rhythm, but the journey was worth every minute.",
-    tags: ["Gameplay", "Graphics", "Difficulty"],
-    time: "2 hours ago",
-  },
-];
+import { gamesApi, toGame, type BackendGame, type Review } from "../lib/api";
 
 function ReviewsPage() {
   const { gameId } = useParams();
-  const game = games.find((item) => item.id === gameId);
-  const gameName =
-    game?.title ??
-    gameId
-      ?.split("-")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ") ??
-    "Game";
-
-  return (
-    <main>
-      <section className="detail-hero">
-        <img src={game?.image ?? games[0].image} alt="" />
-        <div className="hero-overlay" />
-        <div className="breadcrumb">
-          <Link to="/games">Explore Games</Link>
-          <span> / </span>
-          {game?.genre[0] ?? "Reviews"}
-          <span> / </span>
-          {gameName}
-        </div>
-      </section>
-      <section className="detail-intro page-section">
-        <div className="cover">
-          <img src={game?.image ?? games[0].image} alt={`${gameName} cover`} />
-          <span>Community favorite</span>
-        </div>
-        <div className="detail-copy">
-          <div className="detail-badges">
-            <span className="badge">{game?.genre[0] ?? "Player reviews"}</span>
-            {game?.genre[1] && <span className="badge">{game.genre[1]}</span>}
-          </div>
-          <h1>{gameName}</h1>
-          <p className="lead">The community's take on {gameName}.</p>
-          <p className="studio-meta">
-            {game?.year ?? "2025"} · {game?.platforms.join(" · ") ?? "PC"}
-          </p>
-        </div>
-        <aside className="score-card">
-          <span>Community score</span>
-          <strong>{game?.rating.toFixed(1) ?? "9.4"}</strong>
-          <div className="stars" aria-label="5 out of 5 stars">★★★★★</div>
-          <p>Based on {(game?.reviewCount ?? 2847).toLocaleString()} reviews</p>
-          <a href="#reviews">See player reviews</a>
-        </aside>
-      </section>
-      <section className="rating-panel page-section">
-        <div className="rating-summary">
-          <span className="eyebrow">Player verdict</span>
-          <h2>Community rating</h2>
-          <strong>{game?.rating.toFixed(1) ?? "9.4"}</strong>
-        </div>
-        <div className="rating-bars" aria-label="Rating distribution">
-          {[["10", 72], ["9", 16], ["8", 7], ["7", 3], ["6", 1], ["5", 1]].map(
-            ([score, percentage]) => (
-              <div key={score}>
-                <span>{score}</span>
-                <i><em style={{ width: `${percentage}%` }} /></i>
-                <span>{percentage}%</span>
-              </div>
-            ),
-          )}
-        </div>
-      </section>
-      <section className="page-section reviews-section" id="reviews">
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">From the community</span>
-            <h2>Player reviews</h2>
-          </div>
-          <Link to="/login">Write a review →</Link>
-        </div>
-        {reviews.map((review) => (
-          <article className="review-card" key={review.handle}>
-            <div className="review-top">
-              <div className="reviewer">
-                <span className="avatar">{review.initials}</span>
-                <span>
-                  <b>{review.name}</b>
-                  <small>{review.handle}</small>
-                </span>
-              </div>
-              <span className="review-time">{review.time}</span>
-            </div>
-            <div className="review-game">
-              <img src={game?.image ?? games[0].image} alt="" />
-              <Link to={`/games/${game?.id ?? gameId}/reviews`}>
-                {gameName}
-              </Link>
-              <span className="rating">★ {review.score}</span>
-            </div>
-            <h2>{review.title}</h2>
-            <p>{review.text}</p>
-            <div className="review-tags" aria-label="Review tags">
-              {review.tags.map((tag) => (
-                <span className="badge" key={tag}>{tag}</span>
-              ))}
-            </div>
-          </article>
-        ))}
-      </section>
-    </main>
-  );
+  const [game, setGame] = useState<BackendGame | null>(null); const [reviews, setReviews] = useState<Review[]>([]); const [distribution, setDistribution] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { let active = true; if (!gameId) return; setLoading(true); setError(null); gamesApi.detail(gameId).then(async (detail) => { if (!active) return; setGame(detail.data.game); setDistribution(detail.data.ratingDistribution || {}); const id = detail.data.game._id || detail.data.game.id; if (!id) throw new Error("Game identifier is missing"); const reviewResponse = await gamesApi.reviews(id); if (active) setReviews(reviewResponse.data); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load this game."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [gameId]);
+  if (loading) return <main className="page-loading" role="status">Loading game reviews…</main>;
+  if (error || !game) return <main className="subpage"><div className="empty-state"><h2>Game unavailable</h2><p>{error || "This game could not be found."}</p><Link className="btn secondary" to="/games">Explore games</Link></div></main>;
+  const view = toGame(game); const totalReviews = Object.values(distribution).reduce((sum, value) => sum + value, 0) || view.reviewCount; const rating = view.rating.toFixed(1); const image = view.image;
+  return <main><section className="detail-hero"><img src={image} alt="" /><div className="hero-overlay" /><div className="breadcrumb"><Link to="/games">Explore Games</Link><span> / </span>{view.genre[0] || "Reviews"}<span> / </span>{view.title}</div></section><section className="detail-intro page-section"><div className="cover">{image ? <img src={image} alt={`${view.title} cover`} /> : <span className="review-cover-fallback" aria-hidden="true" />}<span>Community favorite</span></div><div className="detail-copy"><div className="detail-badges">{view.genre.slice(0, 2).map((genre) => <span className="badge" key={genre}>{genre}</span>)}</div><h1>{view.title}</h1><p className="lead">{view.description || `The community's take on ${view.title}.`}</p><p className="studio-meta">{view.year || "Release date unavailable"}{game.developer ? ` · ${game.developer}` : ""}{view.platforms.length ? ` · ${view.platforms.join(" · ")}` : ""}</p></div><aside className="score-card"><span>Community score</span><strong>{rating}</strong><div className="stars" aria-label="Community rating">★★★★★</div><p>Based on {totalReviews.toLocaleString()} reviews</p><a href="#reviews">See player reviews</a></aside></section><section className="rating-panel page-section"><div className="rating-summary"><span className="eyebrow">Player verdict</span><h2>Community rating</h2><strong>{rating}</strong></div><div className="rating-bars" aria-label="Rating distribution">{[10, 9, 8, 7, 6, 5].map((score) => { const count = distribution[String(score)] || 0; const percentage = totalReviews ? Math.round((count / totalReviews) * 100) : 0; return <div key={score}><span>{score}</span><i><em style={{ width: `${percentage}%` }} /></i><span>{percentage}%</span></div>; })}</div></section><section className="page-section reviews-section" id="reviews"><div className="section-head"><div><span className="eyebrow">From the community</span><h2>Player reviews</h2></div><Link to="/login">Write a review →</Link></div>{reviews.length ? reviews.map((review) => { const author = review.userId && typeof review.userId !== "string" ? review.userId : undefined; const initials = (author?.displayName || author?.username || "Player").slice(0, 2).toUpperCase(); return <article className="review-card" key={review.id || review._id}><div className="review-top"><div className="reviewer"><span className="avatar">{author?.avatarUrl ? <img src={author.avatarUrl} alt="" /> : initials}</span><span><b>{author?.displayName || author?.username || "Player"}</b><small>{author?.username ? `@${author.username}` : "Community member"}</small></span></div><span className="review-time">{new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(review.createdAt))}</span></div><div className="review-game">{image ? <img src={image} alt="" /> : <span className="review-cover-fallback" aria-hidden="true" />}<Link to={`/games/${gameId}/reviews`}>{view.title}</Link><span className="rating">★ {review.rating.toFixed(1)}</span></div><h2>{review.title}</h2><p>{review.content}</p>{review.tags?.length ? <div className="review-tags" aria-label="Review tags">{review.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}</div> : null}</article>; }) : <div className="empty-state"><h2>No reviews yet</h2><p>Be the first to share a take on this game.</p></div>}</section></main>;
 }
-
 export default ReviewsPage;

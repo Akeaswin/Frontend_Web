@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { useWishlist } from "../context/WishlistContext";
-import { formatReviewCount, type Game } from "../data/games";
+import { formatReviewCount, orderedGameTags, type Game } from "../data/games";
+import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 type GameCardProps = {
   game: Game;
@@ -8,6 +10,8 @@ type GameCardProps = {
 
 function GameCard({ game }: GameCardProps) {
   const { isWishlisted, toggleWishlist } = useWishlist();
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const wishlisted = isWishlisted(game.id);
 
   return (
@@ -32,7 +36,14 @@ function GameCard({ game }: GameCardProps) {
             : `Add ${game.title} to wishlist`
         }
         aria-pressed={wishlisted}
-        onClick={() => toggleWishlist(game.id)}
+        disabled={authLoading}
+        onClick={() => {
+          if (!user) {
+            navigate("/login");
+            return;
+          }
+          void toggleWishlist(game.id);
+        }}
       >
         <span aria-hidden="true">{wishlisted ? "♥" : "♡"}</span>
       </button>
@@ -40,10 +51,10 @@ function GameCard({ game }: GameCardProps) {
         <Link className="card-title" to={`/games/${game.id}/reviews`}>
           {game.title}
         </Link>
-        <p>{game.year} · {game.genre.join(" · ")}</p>
+        <p>{game.year || "Year unavailable"}</p>
         <div className="platforms">
-          {game.platforms.map((platform) => (
-            <span className="badge" key={platform}>{platform}</span>
+          {orderedGameTags(game.genre, game.platforms).map((tag, index) => (
+            <span className="badge" key={`${tag}-${index}`}>{tag}</span>
           ))}
         </div>
         <div className="card-foot">

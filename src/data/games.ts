@@ -105,3 +105,17 @@ export const games: Game[] = [
 export function formatReviewCount(count: number) {
   return new Intl.NumberFormat("en-US").format(count);
 }
+
+export function orderedGameTags(genres: string[] = [], platforms: string[] = []) {
+  const unique = (tags: string[]) => {
+    const seen = new Set<string>();
+    return tags.filter((tag) => {
+      const normalized = tag.trim().toLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+  };
+
+  return [...unique(genres), ...unique(platforms)];
+}
