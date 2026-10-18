@@ -1,6 +1,6 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api").replace(/\/$/, "");
 
-type ApiResponse<T> = { success: boolean; message: string; data: T };
+export type ApiResponse<T> = { success: boolean; message: string; data: T; pagination?: { page: number; limit: number; total: number; totalPages: number } };
 
 let csrfToken: string | undefined;
 
@@ -32,7 +32,7 @@ export type User = {
 };
 
 export type Profile = User & { stats: { totalReviews: number; averageRatingGiven: number; helpfulVotesReceived: number; favoriteGamesCount: number } };
-export type Review = { id?: string; _id?: string; title: string; content: string; rating: number; createdAt: string; helpfulCount?: number; likeCount?: number; tags?: string[]; userId?: { id?: string; _id?: string; username?: string; displayName?: string; avatarUrl?: string }; gameId: { id?: string; _id?: string; title: string; coverImageUrl?: string; genres?: string[]; platforms?: string[] } };
+export type Review = { id?: string; _id?: string; title: string; content: string; rating: number; createdAt: string; updatedAt?: string; helpfulCount?: number; notHelpfulCount?: number; likesCount?: number; likeCount?: number; tags?: string[]; userId?: { id?: string; _id?: string; username?: string; displayName?: string; avatarUrl?: string }; gameId: { id?: string; _id?: string; title: string; slug?: string; coverImageUrl?: string; genres?: string[]; platforms?: string[] } };
 
 export type BackendGame = {
   _id: string;
@@ -40,6 +40,7 @@ export type BackendGame = {
   slug: string;
   title: string;
   coverImageUrl?: string;
+  coverPublicId?: string;
   bannerImageUrl?: string;
   description?: string;
   developer?: string;
@@ -50,6 +51,8 @@ export type BackendGame = {
   averageRating?: number;
   reviewCount?: number;
   createdAt?: string;
+  updatedAt?: string;
+  submittedBy?: string | { id?: string; _id?: string; username?: string; displayName?: string };
 };
 
 export function toGame(game: BackendGame) {
@@ -66,6 +69,7 @@ export function toGame(game: BackendGame) {
     description: game.description ?? "",
     slug: game.slug,
     createdAt: game.createdAt,
+    submittedBy: game.submittedBy,
   };
 }
 
@@ -84,12 +88,12 @@ export const authApi = {
 export const profileApi = {
   get: (username: string) => apiRequest<Profile>(`/users/${encodeURIComponent(username)}`),
   getReviews: (username: string) => apiRequest<Review[]>(`/users/${encodeURIComponent(username)}/reviews?sort=mostRecent&limit=50`),
-  update: (payload: { displayName: string; bio: string; favoriteTags: string[] }) => apiRequest<{ user: User }>("/users/me", { method: "PATCH", body: JSON.stringify(payload) }),
+  update: (payload: { displayName?: string; username?: string; bio?: string; favoriteTags?: string[] }) => apiRequest<{ user: User }>("/users/me", { method: "PATCH", body: JSON.stringify(payload) }),
   uploadAvatar: (file: File) => { const body = new FormData(); body.append("image", file); return apiRequest<{ avatarUrl: string }>("/uploads/avatar/profile", { method: "POST", body }); }
 };
 
 export const gamesApi = {
-  list: (params: { search?: string; genre?: string; platform?: string; minRating?: number; sort?: string; page?: number; limit?: number } = {}) => {
+  list: (params: { search?: string; genre?: string; platform?: string; minRating?: number; sort?: string; page?: number; limit?: number; communityAdded?: boolean } = {}) => {
     const query = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
     return apiRequest<BackendGame[]>(`/games${query.toString() ? `?${query}` : ""}`);
@@ -100,6 +104,7 @@ export const gamesApi = {
   platforms: () => apiRequest<string[]>("/games/platforms"),
   uploadCover: (file: File) => { const body = new FormData(); body.append("image", file); return apiRequest<{ image: { url: string; publicId: string } }>("/uploads/game-cover", { method: "POST", body }); },
   create: (payload: { title: string; coverImageUrl: string; coverPublicId: string; description: string; releaseDate?: string; developer?: string; genres?: string[]; platforms?: string[] }) => apiRequest<BackendGame>("/games", { method: "POST", body: JSON.stringify(payload) }),
+  update: (gameId: string, payload: { title?: string; coverImageUrl?: string; coverPublicId?: string; description?: string; releaseDate?: string; developer?: string; genres?: string[]; platforms?: string[] }) => apiRequest<BackendGame>(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   featured: () => apiRequest<BackendGame[]>("/games/featured?limit=5"),
   // The curated /games/new-releases route sorts by official releaseDate.
   // The catalog route exposes the backend-supported createdAt ordering instead.
@@ -107,11 +112,24 @@ export const gamesApi = {
 };
 
 export const reviewsApi = {
+  list: (params: { search?: string; sort?: string; tag?: string; page?: number; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
+    return apiRequest<Review[]>(`/reviews${query.toString() ? `?${query}` : ""}`);
+  },
   recent: () => apiRequest<Review[]>("/reviews/recent?limit=12"),
+  vote: (reviewId: string, type: "helpful" | "notHelpful") => apiRequest<{ liked: boolean; helpfulVote: "helpful" | "notHelpful" | null }>(`/reviews/${encodeURIComponent(reviewId)}/vote`, { method: "POST", body: JSON.stringify({ type }) }),
+  create: (gameId: string, payload: { title: string; content: string; rating: number; tags?: string[] }) => apiRequest<Review>(`/games/${encodeURIComponent(gameId)}/reviews`, { method: "POST", body: JSON.stringify(payload) }),
+  update: (reviewId: string, payload: { title?: string; content?: string; rating?: number; tags?: string[] }) => apiRequest<Review>(`/reviews/${encodeURIComponent(reviewId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
 };
 
 export const wishlistApi = {
-  list: () => apiRequest<BackendGame[]>("/users/me/wishlist"),
+  list: () => apiRequest<Array<BackendGame & { savedAt?: string }>>("/users/me/wishlist?sort=newest&limit=50"),
   add: (gameId: string) => apiRequest<{ gameId: string; saved: boolean }>(`/users/me/wishlist/${gameId}`, { method: "POST" }),
-  remove: (gameId: string) => apiRequest<{ gameId: string; saved: boolean }>(`/users/me/wishlist/${gameId}`, { method: "DELETE" }),
+  remove: (gameId: string) => apiRequest<{ gameId: string; saved: boolean }>(`/users/me/wishlist/${encodeURIComponent(gameId)}`, { method: "DELETE" }),
+};
+
+export const favoritesApi = {
+  list: () => apiRequest<Array<BackendGame & { savedAt?: string }>>("/users/me/favorites?sort=newest&limit=50"),
+  remove: (gameId: string) => apiRequest<{ gameId: string; saved: boolean }>(`/users/me/favorites/${encodeURIComponent(gameId)}`, { method: "DELETE" }),
 };

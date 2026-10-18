@@ -3,6 +3,7 @@ import { authApi, type User } from "../lib/api";
 
 type AuthContextValue = {
   user: User | null; loading: boolean; error: string | null;
+  updateUser: (user: User) => void;
   login: (identifier: string, password: string) => Promise<void>;
   register: (payload: Parameters<typeof authApi.register>[0]) => Promise<void>;
   logout: () => Promise<void>; clearError: () => void;
@@ -15,7 +16,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { authApi.me().then((r) => setUser(r.data.user)).catch(() => { localStorage.removeItem("gamerReviewProfileDraft"); setUser(null); }).finally(() => setLoading(false)); }, []);
   const value = useMemo<AuthContextValue>(() => ({
-    user, loading, error, clearError: () => setError(null),
+    user, loading, error, updateUser: (nextUser) => setUser(nextUser), clearError: () => setError(null),
     login: async (identifier, password) => { setError(null); try { const r = await authApi.login(identifier, password); localStorage.removeItem("gamerReviewProfileDraft"); setUser(r.data.user); } catch (e) { const message = e instanceof Error ? e.message : "Could not sign in"; setError(message); throw e; } },
     register: async (payload) => { setError(null); try { const r = await authApi.register(payload); setUser(r.data.user); } catch (e) { const message = e instanceof Error ? e.message : "Could not create account"; setError(message); throw e; } },
     logout: async () => { setError(null); try { await authApi.logout(); localStorage.removeItem("gamerReviewProfileDraft"); setUser(null); } catch (e) { const message = e instanceof Error ? e.message : "Could not sign out"; setError(message); throw e; } }

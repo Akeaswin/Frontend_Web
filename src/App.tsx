@@ -1,6 +1,7 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
+import { gamesApi, type BackendGame } from "./lib/api";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const AllReviewsPage = lazy(() => import("./pages/AllReviewsPage"));
@@ -67,14 +68,7 @@ function AppLayout() {
             ))}
           </nav>
           <div className="nav-actions">
-            <NavLink className="nav-search" to="/games" aria-label="Search games">
-              <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-4-4" />
-              </svg>
-              <span>Search games...</span>
-              <kbd>⌘ K</kbd>
-            </NavLink>
+            <HeaderGameSearch />
             {user ? <>
               <button type="button" className="auth-nav-link" onClick={() => void handleLogout()}>Log out</button>
               <NavLink to="/profile" className="avatar" aria-label="Your profile">{user.displayName.slice(0, 2).toUpperCase()}</NavLink>
@@ -116,6 +110,144 @@ function AppLayout() {
           <span>Made for players, by players.</span>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function HeaderGameSearch() {
+  const navigate = useNavigate();
+  const searchRef = useRef<HTMLDivElement>(null);
+  const requestRef = useRef(0);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<BackendGame[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    function handleOutsidePointer(event: MouseEvent) {
+      if (!searchRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutsidePointer);
+    return () => document.removeEventListener("mousedown", handleOutsidePointer);
+  }, []);
+
+  useEffect(() => {
+    const trimmedQuery = query.trim();
+    const requestId = ++requestRef.current;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (trimmedQuery.length < 1) {
+        setResults([]);
+        setLoading(false);
+        setError("");
+        setActiveIndex(-1);
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+      try {
+        const response = await gamesApi.list({ search: trimmedQuery, limit: 10, sort: "popular" });
+        if (cancelled || requestId !== requestRef.current) return;
+        setResults(response.data || []);
+        setActiveIndex(-1);
+      } catch {
+        if (cancelled || requestId !== requestRef.current) return;
+        setResults([]);
+        setActiveIndex(-1);
+        setError("Search is unavailable right now.");
+      } finally {
+        if (!cancelled && requestId === requestRef.current) setLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  function openGame(game: BackendGame) {
+    const gameId = game.slug || game._id || game.id;
+    if (!gameId) return;
+    setOpen(false);
+    setQuery("");
+    setResults([]);
+    setActiveIndex(-1);
+    navigate(`/games/${encodeURIComponent(gameId)}/reviews`);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (event.key === "ArrowDown" && results.length) {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((index) => (index + 1) % results.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && results.length) {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((index) => (index <= 0 ? results.length - 1 : index - 1));
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (!loading && results.length) openGame(results[activeIndex >= 0 ? activeIndex : 0]);
+    }
+  }
+
+  const showDropdown = open && query.trim().length >= 1;
+
+  return (
+    <div className="nav-search-wrap" ref={searchRef}>
+      <div className="nav-search" role="combobox" aria-expanded={showDropdown} aria-haspopup="listbox" aria-owns="header-game-search-results">
+        <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-4-4" />
+        </svg>
+        <input
+          aria-controls="header-game-search-results"
+          aria-label="Search games"
+          aria-autocomplete="list"
+          aria-activedescendant={activeIndex >= 0 ? `header-game-result-${activeIndex}` : undefined}
+          onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search games..."
+          value={query}
+        />
+        <kbd>⌘ K</kbd>
+      </div>
+      {showDropdown ? (
+        <div className="header-game-results" id="header-game-search-results" role="listbox" aria-label="Game search results">
+          {loading ? <div className="header-game-search-status" role="status">Searching…</div> : error ? <div className="header-game-search-status" role="alert">{error}</div> : results.length === 0 ? <div className="header-game-search-status">No games found.</div> : results.map((game, index) => {
+            const gameId = game.slug || game._id || game.id || String(index);
+            const year = game.releaseYear || (game.releaseDate ? new Date(game.releaseDate).getFullYear() : undefined);
+            return <button
+              aria-selected={activeIndex === index}
+              className={`header-game-result${activeIndex === index ? " active" : ""}`}
+              id={`header-game-result-${index}`}
+              key={gameId}
+              onClick={() => openGame(game)}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveIndex(index)}
+              role="option"
+              type="button"
+            >
+              {game.coverImageUrl || game.bannerImageUrl ? <img src={game.coverImageUrl || game.bannerImageUrl} alt="" /> : <span className="header-game-cover-fallback" aria-hidden="true" />}
+              <span className="header-game-result-copy"><strong>{game.title}</strong><small>{[game.averageRating ? `★ ${game.averageRating.toFixed(1)}` : "", year, game.genres?.slice(0, 2).join(" · ")].filter(Boolean).join(" · ") || "Game details"}</small></span>
+            </button>;
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

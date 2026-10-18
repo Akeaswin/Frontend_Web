@@ -21,7 +21,7 @@ function GameCard({ game }: GameCardProps) {
         to={`/games/${game.id}/reviews`}
         aria-label={`Open reviews for ${game.title}`}
       >
-        <img src={game.image} alt="" loading="lazy" />
+        {game.image ? <img src={game.image} alt="" loading="lazy" /> : <span className="card-image-fallback" aria-hidden="true" />}
         <span className="media-fade" />
         <span className="rating">
           <span aria-hidden="true">★</span> {game.rating.toFixed(1)}

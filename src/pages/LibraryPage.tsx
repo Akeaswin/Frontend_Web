@@ -1,96 +1,54 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { useWishlist } from "../context/WishlistContext";
-import { formatReviewCount, games } from "../data/games";
+import { useAuth } from "../context/AuthContext";
+import { gamesApi, profileApi, reviewsApi, toGame, wishlistApi, type BackendGame, type Review } from "../lib/api";
 
-type LibraryTab = "Wishlist" | "Favorites";
+type LibraryTab = "favorite" | "reviews" | "post";
+type Sort = "recent" | "highest" | "lowest" | "title";
+const gameGenres = ["Action", "RPG", "Adventure", "FPS", "Strategy", "Horror", "Indie"];
+const gamePlatforms = ["Console", "PC", "Smartphone"];
+const idOf = (value: unknown) => typeof value === "string" ? value : value && typeof value === "object" ? (value as { id?: string; _id?: string }).id || (value as { _id?: string })._id : undefined;
+const dateLabel = (value?: string) => { if (!value) return "Date unavailable"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "Date unavailable" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date); };
 
 function LibraryPage() {
-  const [tab, setTab] = useState<LibraryTab>("Wishlist");
-  const { wishlist, toggleWishlist } = useWishlist();
-  const [favorites] = useState(["ashen-crown", "neon-protocol"]);
-  const visibleIds = tab === "Wishlist" ? wishlist : favorites;
-  const visibleGames = visibleIds
-    .map((id) => games.find((game) => game.id === id))
-    .filter((game) => game !== undefined);
+  const { user, loading: authLoading } = useAuth();
+  const [tab, setTab] = useState<LibraryTab>("favorite"); const [query, setQuery] = useState(""); const [sort, setSort] = useState<Sort>("recent");
+  const [favorites, setFavorites] = useState<Array<BackendGame & { savedAt?: string }>>([]); const [favoriteCount, setFavoriteCount] = useState<number | null>(null); const [reviews, setReviews] = useState<Review[]>([]); const [submittedGames, setSubmittedGames] = useState<BackendGame[]>([]);
+  const [loading, setLoading] = useState(false); const [error, setError] = useState<string | null>(null); const [removing, setRemoving] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<Review | null>(null); const [editForm, setEditForm] = useState({ title: "", content: "", rating: 0, tags: "" }); const [savingReview, setSavingReview] = useState(false); const [editError, setEditError] = useState<string | null>(null);
+  const [editingGame, setEditingGame] = useState<BackendGame | null>(null); const [gameForm, setGameForm] = useState({ title: "", description: "", releaseDate: "", developer: "", genres: [] as string[], platforms: [] as string[] }); const [gameCover, setGameCover] = useState<File | null>(null); const [gameCoverName, setGameCoverName] = useState(""); const [savingGame, setSavingGame] = useState(false); const [gameEditError, setGameEditError] = useState<string | null>(null);
 
-  return (
-    <main className="subpage">
-      <div className="page-title-row">
-        <div>
-          <span className="eyebrow">Your collection</span>
-          <h1>My game library</h1>
-          <p>
-            Keep every world you love—and every adventure still ahead—in one
-            place.
-          </p>
-        </div>
-      </div>
+  useEffect(() => {
+    if (authLoading || !user) { if (!authLoading && !user) { setFavorites([]); setFavoriteCount(null); setReviews([]); setSubmittedGames([]); } return; }
+    let active = true; setLoading(true); setError(null);
+    Promise.all([wishlistApi.list(), profileApi.getReviews(user.username), gamesApi.list({ communityAdded: true, limit: 50, sort: "recentlyAdded" })])
+      .then(([favoriteResponse, reviewResponse, gameResponse]) => { if (!active) return; setFavorites(favoriteResponse.data); setFavoriteCount(favoriteResponse.pagination?.total ?? new Set(favoriteResponse.data.map((game) => game._id || game.id || game.slug)).size); setReviews(reviewResponse.data); setSubmittedGames(gameResponse.data.filter((game) => { const owner = game.submittedBy; if (typeof owner === "string") return owner === user.id; return Boolean(owner && ((owner.id || owner._id) === user.id || owner.username?.toLowerCase() === user.username.toLowerCase())); })); })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load your library."); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [authLoading, user]);
 
-      <div className="library-tabs" role="tablist" aria-label="Library sections">
-        {(["Wishlist", "Favorites"] as const).map((item) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === item}
-            className={tab === item ? "active" : ""}
-            onClick={() => setTab(item)}
-            key={item}
-          >
-            <span aria-hidden="true">{item === "Wishlist" ? "▣" : "♥"}</span>
-            {item}
-            <span>{item === "Wishlist" ? wishlist.length : favorites.length}</span>
-          </button>
-        ))}
-      </div>
+  const visibleFavorites = useMemo(() => [...favorites].filter((game) => game.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === "title" ? a.title.localeCompare(b.title) : sort === "highest" ? (b.averageRating ?? -1) - (a.averageRating ?? -1) : new Date(b.savedAt || 0).getTime() - new Date(a.savedAt || 0).getTime()), [favorites, query, sort]);
+  const visibleReviews = useMemo(() => [...reviews].filter((review) => { const game = typeof review.gameId === "object" ? review.gameId : undefined; return `${game?.title || ""} ${review.title} ${review.content}`.toLowerCase().includes(query.toLowerCase()); }).sort((a, b) => { const ag = typeof a.gameId === "object" ? a.gameId.title : ""; const bg = typeof b.gameId === "object" ? b.gameId.title : ""; return sort === "title" ? ag.localeCompare(bg) : sort === "highest" ? b.rating - a.rating : sort === "lowest" ? a.rating - b.rating : new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime(); }), [reviews, query, sort]);
+  const visibleSubmittedGames = useMemo(() => [...submittedGames].filter((game) => game.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === "title" ? a.title.localeCompare(b.title) : sort === "highest" ? (b.averageRating ?? -1) - (a.averageRating ?? -1) : new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()), [submittedGames, query, sort]);
 
-      {visibleGames.length ? (
-        <div className="library-list">
-          {visibleGames.map((game) => (
-            <article className="library-item" key={game.id}>
-              <img src={game.image} alt="" loading="lazy" />
-              <div>
-                <div className="platforms">
-                  {game.platforms.map((platform) => (
-                    <span className="badge" key={platform}>{platform}</span>
-                  ))}
-                </div>
-                <h2>{game.title}</h2>
-                <p>
-                  {game.genre.join(" · ")} · Released {game.year} ·{" "}
-                  {formatReviewCount(game.reviewCount)} reviews
-                </p>
-              </div>
-              <span className="rating">★ {game.rating.toFixed(1)}</span>
-              <div className="library-actions">
-                <Link
-                  className="btn secondary"
-                  to={`/games/${game.id}/reviews`}
-                >
-                  View reviews
-                </Link>
-                {tab === "Wishlist" && (
-                  <button
-                    type="button"
-                    aria-label={`Remove ${game.title} from wishlist`}
-                    onClick={() => toggleWishlist(game.id)}
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="empty-state library-empty">
-          <h2>Your wishlist is ready for its first adventure</h2>
-          <p>Save games you want to play and find them here anytime.</p>
-          <Link className="btn" to="/games">Explore games</Link>
-        </div>
-      )}
-    </main>
-  );
+  function changeTab(nextTab: LibraryTab) { setTab(nextTab); setQuery(""); setSort("recent"); }
+  async function removeFavorite(game: BackendGame) { const gameId = game._id || game.id; if (!gameId || removing[gameId]) return; setRemoving((current) => ({ ...current, [gameId]: true })); try { await wishlistApi.remove(gameId); setFavorites((current) => current.filter((item) => (item._id || item.id) !== gameId)); setFavoriteCount((current) => current === null ? current : Math.max(0, current - 1)); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not remove this saved game."); } finally { setRemoving((current) => ({ ...current, [gameId]: false })); } }
+  function openEdit(review: Review) { setEditing(review); setEditError(null); setEditForm({ title: review.title, content: review.content, rating: review.rating, tags: (review.tags || []).join(", ") }); }
+  function openGameEdit(game: BackendGame) { setEditingGame(game); setGameEditError(null); setGameCover(null); setGameCoverName(""); setGameForm({ title: game.title, description: game.description || "", releaseDate: game.releaseDate ? game.releaseDate.slice(0, 10) : "", developer: game.developer || "", genres: game.genres || [], platforms: game.platforms || [] }); }
+  async function saveGame(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const gameId = editingGame?._id || editingGame?.id; if (!gameId || !gameForm.title.trim() || !gameForm.description.trim()) { setGameEditError("Game title and description are required."); return; } setSavingGame(true); setGameEditError(null); try { const payload: Parameters<typeof gamesApi.update>[1] = { title: gameForm.title.trim(), description: gameForm.description.trim(), releaseDate: gameForm.releaseDate || undefined, developer: gameForm.developer.trim() || undefined, genres: gameForm.genres, platforms: gameForm.platforms }; if (gameCover) { const uploaded = await gamesApi.uploadCover(gameCover); payload.coverImageUrl = uploaded.data.image.url; payload.coverPublicId = uploaded.data.image.publicId; } const response = await gamesApi.update(gameId, payload); setSubmittedGames((current) => current.map((game) => (game._id || game.id) === gameId ? response.data : game)); setEditingGame(null); } catch (reason) { setGameEditError(reason instanceof Error ? reason.message : "Could not update this game."); } finally { setSavingGame(false); } }
+  async function saveReview(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const reviewId = idOf(editing?.id || editing?._id); if (!reviewId || !editForm.title.trim() || !editForm.content.trim() || !editForm.rating) return; setSavingReview(true); setEditError(null); try { const response = await reviewsApi.update(reviewId, { title: editForm.title.trim(), content: editForm.content.trim(), rating: editForm.rating, tags: editForm.tags.split(",").map((tag) => tag.trim()).filter(Boolean) }); setReviews((current) => current.map((review) => idOf(review.id || review._id) === reviewId ? response.data : review)); setEditing(null); } catch (reason) { setEditError(reason instanceof Error ? reason.message : "Could not update this review."); } finally { setSavingReview(false); } }
+
+  if (authLoading) return <main className="subpage"><div className="empty-state library-empty" role="status"><h2>Loading your library…</h2><p>Checking your session.</p></div></main>;
+  if (!user) return <main className="subpage"><div className="empty-state library-empty"><h2>Sign in to open your library</h2><p>Your Favorites, reviews, and submitted games are private to your account.</p><Link className="btn" to="/login">Log in</Link></div></main>;
+  const isReviews = tab === "reviews"; const emptyTitle = tab === "favorite" ? "No favorite games yet" : isReviews ? "No reviews match your search" : "No games submitted yet"; const emptyCopy = tab === "favorite" ? "Save games from Explore Games and they will appear here." : isReviews ? "Try another search term or write your first review." : "Games you submit to the catalog will appear here once they are associated with your account."; const gameHref = (game: BackendGame) => `/games/${game.slug || game._id || game.id}/reviews`;
+  const tabs = [['favorite', '♥', 'My Favorite', favoriteCount], ['reviews', '✎', 'My Reviews', reviews.length], ['post', '＋', 'Post Game', submittedGames.length]] as const;
+  return <main className="subpage library-page"><div className="page-title-row"><div><span className="eyebrow">Your collection</span><h1>My game library</h1><p>Keep every world you love—and every adventure still ahead—in one place.</p></div></div>
+    <div className="library-tabs" role="tablist" aria-label="Library sections">{tabs.map(([value, icon, label, count]) => <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => changeTab(value)}><span aria-hidden="true">{icon}</span>{label}{!loading && count !== null ? <span>{count}</span> : null}</button>)}</div>
+    <div className="library-tools"><label className="catalog-search"><svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={isReviews ? "Search your reviews or games..." : "Search your games..."} aria-label="Search your library" /></label><select value={sort} onChange={(event) => setSort(event.target.value as Sort)} aria-label="Sort library"><option value="recent">{isReviews ? "Recently Updated" : "Recently Added"}</option><option value="highest">Highest Rated</option>{isReviews ? <option value="lowest">Lowest Rated</option> : null}<option value="title">{isReviews ? "Game Title A–Z" : "Title A–Z"}</option></select></div>
+    {loading ? <div className="empty-state library-empty" role="status"><h2>Loading your library…</h2><p>Fetching your personal collection.</p></div> : error ? <div className="empty-state library-empty"><h2>Library unavailable</h2><p>{error}</p></div> : tab === "reviews" ? <div className="library-list">{visibleReviews.map((review) => { const game = typeof review.gameId === "object" ? review.gameId : undefined; const reviewId = idOf(review.id || review._id); const gameId = idOf(review.gameId); const owner = typeof review.userId === "object" ? review.userId : undefined; const owned = Boolean(owner && ((owner.id || owner._id) === user?.id || owner.username?.toLowerCase() === user?.username.toLowerCase())); return <article className="library-item review-library-item" key={reviewId || review.createdAt}>{game?.coverImageUrl ? <img src={game.coverImageUrl} alt="" loading="lazy" /> : <span className="library-cover-fallback" aria-hidden="true" />}<div><div className="platforms">{(game?.platforms || []).slice(0, 3).map((platform) => <span className="badge" key={platform}>{platform}</span>)}</div><h2>{game?.title || "Unavailable game"}</h2><p><span className="rating">★ {review.rating.toFixed(1)}</span> · {dateLabel(review.updatedAt || review.createdAt)}</p><p className="review-preview">{review.content}</p>{review.tags?.length ? <div className="review-tags">{review.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}</div> : null}</div><div className="library-actions"><Link className="btn secondary" to={gameId ? `/games/${game?.slug || gameId}/reviews` : "/reviews"}>View Review</Link>{owned && reviewId ? <button type="button" aria-label={`Edit review for ${game?.title || "game"}`} onClick={() => openEdit(review)}>⚙</button> : null}</div></article>; })}</div> : <div className="library-list">{(tab === "favorite" ? visibleFavorites : visibleSubmittedGames).map((game) => { const view = toGame(game); const gameId = game._id || game.id || ""; return <article className="library-item" key={gameId || game.slug}><img src={view.image} alt="" loading="lazy" /><div><div className="platforms">{view.platforms.slice(0, 3).map((platform) => <span className="badge" key={platform}>{platform}</span>)}</div><h2>{view.title}</h2><p>{view.genre.join(" · ") || "Genres unavailable"}{view.year ? ` · Released ${view.year}` : ""}</p></div><span className="rating">{view.rating ? `★ ${view.rating.toFixed(1)}` : "—"}</span><div className="library-actions"><Link className="btn secondary" to={gameHref(game)}>View Details</Link>{tab === "favorite" ? <button type="button" disabled={Boolean(removing[gameId])} aria-label={`Remove ${game.title} from favorites`} onClick={() => void removeFavorite(game)}>{removing[gameId] ? "…" : "×"}</button> : <button type="button" aria-label={`Edit ${game.title}`} onClick={() => openGameEdit(game)}>⚙</button>}</div></article>; })}</div>}
+    {!loading && !error && ((tab === "favorite" && visibleFavorites.length === 0) || (isReviews && visibleReviews.length === 0) || (tab === "post" && visibleSubmittedGames.length === 0)) ? <div className="empty-state library-empty"><h2>{emptyTitle}</h2><p>{emptyCopy}</p><Link className="btn secondary" to={isReviews ? "/reviews" : "/games"}>{isReviews ? "Explore reviews" : "Explore games"}</Link></div> : null}
+    {editing ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingReview) setEditing(null); }}><section className="add-game-modal" role="dialog" aria-modal="true" aria-labelledby="edit-review-title"><header className="add-game-modal-header"><div><span className="eyebrow">Your review</span><h2 id="edit-review-title">Edit review</h2></div><button className="modal-close" type="button" onClick={() => setEditing(null)} disabled={savingReview} aria-label="Close">×</button></header><form className="add-game-form" onSubmit={(event) => void saveReview(event)}><label>Title<input value={editForm.title} onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))} maxLength={160} required /></label><label>Your review<textarea value={editForm.content} onChange={(event) => setEditForm((current) => ({ ...current, content: event.target.value }))} maxLength={10000} rows={6} required /></label><label>Rating<input type="number" min={1} max={10} value={editForm.rating || ""} onChange={(event) => setEditForm((current) => ({ ...current, rating: Number(event.target.value) }))} required /></label><label>Tags<input value={editForm.tags} onChange={(event) => setEditForm((current) => ({ ...current, tags: event.target.value }))} placeholder="Gameplay, Story" /></label>{editError ? <p className="form-error" role="alert">{editError}</p> : null}<div className="add-game-actions"><button className="modal-cancel" type="button" onClick={() => setEditing(null)} disabled={savingReview}>Cancel</button><button className="btn" type="submit" disabled={savingReview}>{savingReview ? "Saving…" : "Save changes"}</button></div></form></section></div> : null}
+    {editingGame ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingGame) setEditingGame(null); }}><section className="add-game-modal" role="dialog" aria-modal="true" aria-labelledby="edit-game-title"><header className="add-game-modal-header"><div><span className="eyebrow">Your submission</span><h2 id="edit-game-title">Edit game</h2><p>Correct the information for {editingGame.title}.</p></div><button className="modal-close" type="button" onClick={() => setEditingGame(null)} disabled={savingGame} aria-label="Close">×</button></header><form className="add-game-form" onSubmit={(event) => void saveGame(event)}><label>Game title<input value={gameForm.title} onChange={(event) => setGameForm((current) => ({ ...current, title: event.target.value }))} maxLength={120} required /></label><label>Cover image<span className="upload-area"><input accept="image/png,image/jpeg,image/webp" className="file-input" type="file" onChange={(event) => { const file = event.target.files?.[0] || null; setGameCover(file); setGameCoverName(file?.name || ""); }} /><span className="upload-icon" aria-hidden="true">⇧</span><strong>{gameCoverName || "Keep current cover"}</strong><small>Choose a replacement only if needed · JPG, PNG or WebP</small></span></label><label>Description<textarea value={gameForm.description} onChange={(event) => setGameForm((current) => ({ ...current, description: event.target.value }))} maxLength={10000} rows={5} required /></label><div className="add-game-fields"><label>Release date<input type="date" value={gameForm.releaseDate} onChange={(event) => setGameForm((current) => ({ ...current, releaseDate: event.target.value }))} /></label><label>Developer<input value={gameForm.developer} onChange={(event) => setGameForm((current) => ({ ...current, developer: event.target.value }))} maxLength={120} /></label></div><fieldset className="genre-picker"><legend>Genres</legend><div>{gameGenres.map((genre) => <button aria-pressed={gameForm.genres.includes(genre)} className={gameForm.genres.includes(genre) ? "selected" : ""} key={genre} onClick={() => setGameForm((current) => ({ ...current, genres: current.genres.includes(genre) ? current.genres.filter((item) => item !== genre) : [...current.genres, genre] }))} type="button">{genre}</button>)}</div></fieldset><fieldset className="genre-picker"><legend>Platforms</legend><div>{gamePlatforms.map((platform) => <button aria-pressed={gameForm.platforms.includes(platform)} className={gameForm.platforms.includes(platform) ? "selected" : ""} key={platform} onClick={() => setGameForm((current) => ({ ...current, platforms: current.platforms.includes(platform) ? current.platforms.filter((item) => item !== platform) : [...current.platforms, platform] }))} type="button">{platform}</button>)}</div></fieldset>{gameEditError ? <p className="form-error" role="alert">{gameEditError}</p> : null}<div className="add-game-actions"><button className="modal-cancel" type="button" onClick={() => setEditingGame(null)} disabled={savingGame}>Cancel</button><button className="btn" type="submit" disabled={savingGame}>{savingGame ? "Saving…" : "Save changes"}</button></div></form></section></div> : null}
+  </main>;
 }
-
 export default LibraryPage;

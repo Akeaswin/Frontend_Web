@@ -1,284 +1,43 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { games } from "../data/games";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { gamesApi, reviewsApi, type BackendGame, type Review } from "../lib/api";
 
-const reviews = [
-  {
-    id: "maya-elden-ring",
-    user: "Maya Chen",
-    handle: "@mayaplays",
-    initials: "MC",
-    gameId: "elden-ring",
-    rating: 9.5,
-    title: "A world worth getting lost in",
-    text: "Elden Ring doesn't just build a beautiful world—it makes every corner feel consequential. The combat rewards patience, the story trusts its audience, and the score is extraordinary.",
-    tags: ["Gameplay", "Story", "Open World"],
-    likes: 328,
-    helpful: 241,
-    time: "18 min ago",
-  },
-  {
-    id: "theo-ashen-crown",
-    user: "Theo Brooks",
-    handle: "@theob",
-    initials: "TB",
-    gameId: "ashen-crown",
-    rating: 9.0,
-    title: "Brutal, beautiful, and deeply rewarding",
-    text: "The opening hours demand a lot, but Ashen Crown's precise combat and layered level design make the effort worthwhile. One of the year's most memorable adventures.",
-    tags: ["Difficulty", "Gameplay", "Soundtrack"],
-    likes: 186,
-    helpful: 152,
-    time: "2 hours ago",
-  },
-  {
-    id: "jules-neon-protocol",
-    user: "Jules Okafor",
-    handle: "@juleso",
-    initials: "JO",
-    gameId: "neon-protocol",
-    rating: 8.5,
-    title: "A sharp multiplayer surprise",
-    text: "Smart maps, confident gunplay, and refreshingly fair progression. Matchmaking still needs work, but the foundation is excellent.",
-    tags: ["Multiplayer", "Performance", "Gameplay"],
-    likes: 94,
-    helpful: 78,
-    time: "Yesterday",
-  },
-  {
-    id: "rina-verdant-divide",
-    user: "Rina Patel",
-    handle: "@rinaplays",
-    initials: "RP",
-    gameId: "verdant-divide",
-    rating: 8.9,
-    title: "A quiet adventure that stays with you",
-    text: "A thoughtful, beautifully paced journey. The small character moments and lush environments are the reason I kept coming back.",
-    tags: ["Story", "Graphics", "Adventure"],
-    likes: 72,
-    helpful: 51,
-    time: "Yesterday",
-  },
-];
+const popularTags = ["Gameplay", "Story", "Graphics", "Performance", "Multiplayer"];
+const filters = [{ label: "All reviews", sort: "mostRecent" }, { label: "Most helpful", sort: "mostHelpful" }, { label: "Highest rated", sort: "highestRating" }, { label: "Lowest rated", sort: "lowestRating" }] as const;
 
-const popularTags = [
-  "Gameplay",
-  "Story",
-  "Graphics",
-  "Performance",
-  "Multiplayer",
-];
+function idOf(value: string | { id?: string; _id?: string } | undefined) { return typeof value === "string" ? value : value?.id || value?._id; }
+function authorOf(review: Review) { return typeof review.userId === "object" ? review.userId : undefined; }
+function gameOf(review: Review) { return typeof review.gameId === "object" ? review.gameId : undefined; }
 
 function AllReviewsPage() {
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState("Newest first");
-  const [activeTag, setActiveTag] = useState("");
-  const [likedReviews, setLikedReviews] = useState<string[]>([]);
+  const { user, loading: authLoading } = useAuth(); const navigate = useNavigate();
+  const [reviews, setReviews] = useState<Review[]>([]); const [total, setTotal] = useState(0); const [page, setPage] = useState(1);
+  const [query, setQuery] = useState(""); const [activeQuery, setActiveQuery] = useState(""); const [sort, setSort] = useState("mostRecent"); const [activeTag, setActiveTag] = useState("");
+  const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [voting, setVoting] = useState<Record<string, boolean>>({}); const [votes, setVotes] = useState<Record<string, string | null>>({});
+  const [modalOpen, setModalOpen] = useState(false); const [selectedGame, setSelectedGame] = useState<BackendGame | null>(null); const [gameQuery, setGameQuery] = useState(""); const [gameResults, setGameResults] = useState<BackendGame[]>([]); const [gameLoading, setGameLoading] = useState(false); const [gameError, setGameError] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: "", content: "", rating: 0, tags: [] as string[] }); const [submitting, setSubmitting] = useState(false); const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const filteredReviews = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    const filtered = reviews.filter((review) => {
-      const game = games.find((item) => item.id === review.gameId);
-      const searchable = [
-        review.title,
-        review.text,
-        review.user,
-        game?.title ?? "",
-        ...review.tags,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return (
-        searchable.includes(search) &&
-        (!activeTag || review.tags.includes(activeTag))
-      );
-    });
+  useEffect(() => { const timer = window.setTimeout(() => setActiveQuery(query.trim()), 300); return () => window.clearTimeout(timer); }, [query]);
+  useEffect(() => { let active = true; setLoading(true); setError(null); reviewsApi.list({ search: activeQuery, sort, tag: activeTag, page, limit: 12 }).then((response) => { if (active) { setReviews(response.data); setTotal(response.pagination?.total ?? response.data.length); } }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load reviews."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [activeQuery, activeTag, page, sort]);
+  useEffect(() => { if (!modalOpen || !gameQuery.trim()) { setGameResults([]); return; } let active = true; const timer = window.setTimeout(() => { setGameLoading(true); setGameError(null); gamesApi.list({ search: gameQuery.trim(), page: 1, limit: 8 }).then((response) => { if (active) setGameResults(response.data); }).catch((reason) => { if (active) setGameError(reason instanceof Error ? reason.message : "Could not search games."); }).finally(() => { if (active) setGameLoading(false); }); }, 300); return () => { active = false; window.clearTimeout(timer); }; }, [gameQuery, modalOpen]);
 
-    if (sort === "Highest rating") {
-      return filtered.sort((a, b) => b.rating - a.rating);
-    }
-    if (sort === "Lowest rating") {
-      return filtered.sort((a, b) => a.rating - b.rating);
-    }
-    if (sort === "Most helpful") {
-      return filtered.sort((a, b) => b.helpful - a.helpful);
-    }
-    return filtered;
-  }, [activeTag, query, sort]);
+  const activeFilter = filters.find((item) => item.sort === sort)?.label || "All reviews"; const totalPages = Math.max(1, Math.ceil(total / 12)); const canWrite = !authLoading && Boolean(user);
+  function openComposer() { if (!canWrite) { navigate("/login"); return; } setSubmitError(null); setModalOpen(true); }
+  function chooseFilter(nextSort: string) { setSort(nextSort); setPage(1); }
+  function chooseTag(tag: string) { setActiveTag((current) => current === tag ? "" : tag); setPage(1); }
+  async function vote(review: Review, type: "helpful" | "notHelpful") { const reviewId = idOf(review.id || review._id); if (!reviewId || voting[reviewId]) return; if (!user) { navigate("/login"); return; } setVoting((current) => ({ ...current, [reviewId]: true })); try { const response = await reviewsApi.vote(reviewId, type); setVotes((current) => ({ ...current, [reviewId]: response.data.helpfulVote })); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save your vote."); } finally { setVoting((current) => ({ ...current, [reviewId]: false })); } }
+  async function submitReview(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selectedGame || !form.title.trim() || !form.content.trim() || form.rating < 1) { setSubmitError("Select a game, add a title and review, and choose a rating from 1 to 10."); return; } const gameId = selectedGame._id || selectedGame.id; if (!gameId) { setSubmitError("The selected game is missing its identifier."); return; } setSubmitting(true); setSubmitError(null); try { await reviewsApi.create(gameId, { title: form.title.trim(), content: form.content.trim(), rating: form.rating, tags: form.tags }); setModalOpen(false); setSelectedGame(null); setGameQuery(""); setForm({ title: "", content: "", rating: 0, tags: [] }); setPage(1); const response = await reviewsApi.list({ search: activeQuery, sort, tag: activeTag, page: 1, limit: 12 }); setReviews(response.data); setTotal(response.pagination?.total ?? response.data.length); } catch (reason) { setSubmitError(reason instanceof Error ? reason.message : "Could not publish your review."); } finally { setSubmitting(false); } }
+  const reviewCountLabel = useMemo(() => `${total.toLocaleString()} reviews · Sorted by ${activeFilter}${activeTag ? ` · Tagged #${activeTag}` : ""}`, [activeFilter, activeTag, total]);
 
-  function toggleLike(reviewId: string) {
-    setLikedReviews((current) =>
-      current.includes(reviewId)
-        ? current.filter((id) => id !== reviewId)
-        : [...current, reviewId],
-    );
-  }
-
-  return (
-    <main className="subpage all-reviews-page">
-      <div className="page-title-row">
-        <div>
-          <span className="eyebrow">Real players, honest takes</span>
-          <h1>Community reviews</h1>
-          <p>
-            Find your next favorite game through the people who know it best.
-          </p>
-        </div>
-        <Link className="btn" to="/login">
-          <span aria-hidden="true">↗</span> Write a review
-        </Link>
-      </div>
-
-      <div className="reviews-tools">
-        <label className="catalog-search">
-          <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-4-4" />
-          </svg>
-          <input
-            aria-label="Search reviews, games, users, or tags"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search reviews, games, users, or tags..."
-            value={query}
-          />
-        </label>
-        <label className="visually-hidden" htmlFor="review-sort">Sort reviews</label>
-        <select
-          id="review-sort"
-          onChange={(event) => setSort(event.target.value)}
-          value={sort}
-        >
-          <option>Newest first</option>
-          <option>Most helpful</option>
-          <option>Highest rating</option>
-          <option>Lowest rating</option>
-        </select>
-        <button
-          className={`reviews-filter-button${activeTag ? " active" : ""}`}
-          onClick={() => setActiveTag(activeTag ? "" : "Gameplay")}
-          type="button"
-        >
-          <span aria-hidden="true">☷</span> {activeTag ? `#${activeTag}` : "Filters"}
-        </button>
-      </div>
-
-      <div className="review-layout">
-        <aside className="review-aside">
-          <h2>Discover reviews</h2>
-          <button
-            className={!activeTag ? "active" : ""}
-            onClick={() => setActiveTag("")}
-            type="button"
-          >
-            All reviews <span>8.4k</span>
-          </button>
-          <button type="button" onClick={() => setSort("Most helpful")}>
-            Most helpful
-          </button>
-          <button type="button" onClick={() => setSort("Highest rating")}>
-            Highest rated
-          </button>
-          <hr />
-          <label>Popular tags</label>
-          {popularTags.map((tag) => (
-            <button
-              className={activeTag === tag ? "active" : ""}
-              key={tag}
-              onClick={() => setActiveTag(activeTag === tag ? "" : tag)}
-              type="button"
-            >
-              #{tag}
-            </button>
-          ))}
-        </aside>
-
-        <section className="review-feed" aria-label="Community review feed">
-          <div className="feed-head">
-            <span>
-              <b>{filteredReviews.length}</b> reviews · Sorted by{" "}
-              <b>{sort}</b>
-              {activeTag && <> · Tagged <b>#{activeTag}</b></>}
-            </span>
-          </div>
-          {filteredReviews.map((review) => {
-            const game = games.find((item) => item.id === review.gameId);
-            if (!game) return null;
-            const liked = likedReviews.includes(review.id);
-
-            return (
-              <article className="review-card" key={review.id}>
-                <div className="review-top">
-                  <Link className="reviewer" to="/profile">
-                    <span className="avatar">{review.initials}</span>
-                    <span>
-                      <b>{review.user}</b>
-                      <small>{review.handle}</small>
-                    </span>
-                  </Link>
-                  <span className="review-time">{review.time}</span>
-                </div>
-                <div className="review-game">
-                  <img src={game.image} alt="" />
-                  <Link to={`/games/${game.id}/reviews`}>{game.title}</Link>
-                  <Link
-                    className="rating"
-                    to={`/games/${game.id}/reviews`}
-                    aria-label={`${game.title} community score ${game.rating.toFixed(1)}`}
-                  >
-                    ★ {game.rating.toFixed(1)}
-                  </Link>
-                </div>
-                <h2>{review.title}</h2>
-                <p>{review.text}</p>
-                <div className="review-tags" aria-label="Review tags">
-                  {review.tags.map((tag) => (
-                    <button
-                      className={activeTag === tag ? "active" : ""}
-                      key={tag}
-                      onClick={() => setActiveTag(activeTag === tag ? "" : tag)}
-                      type="button"
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <div className="review-actions">
-                  <button
-                    aria-pressed={liked}
-                    className={liked ? "active" : ""}
-                    onClick={() => toggleLike(review.id)}
-                    type="button"
-                  >
-                    {liked ? "♥" : "♡"} {review.likes + (liked ? 1 : 0)}
-                  </button>
-                  <span>♧ Helpful · {review.helpful}</span>
-                  <Link to={`/games/${game.id}/reviews`}>
-                    Read full review <span aria-hidden="true">→</span>
-                  </Link>
-                </div>
-              </article>
-            );
-          })}
-          {filteredReviews.length === 0 && (
-            <div className="empty-state">
-              <h2>No reviews match your filters</h2>
-              <p>Try another search term or select a different tag.</p>
-              <button
-                className="btn secondary"
-                onClick={() => {
-                  setQuery("");
-                  setActiveTag("");
-                }}
-                type="button"
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
-        </section>
-      </div>
+  return <>
+    <main className="subpage all-reviews-page"><div className="page-title-row"><div><span className="eyebrow">Real players, honest takes</span><h1>Community reviews</h1><p>Find your next favorite game through the people who know it best.</p></div><button className="btn" onClick={openComposer} type="button"><span aria-hidden="true">↗</span> Write a review</button></div>
+      <div className="reviews-tools"><label className="catalog-search"><svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><input aria-label="Search reviews, games, users, or tags" onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search reviews, games, users, or tags..." value={query} /></label><label className="visually-hidden" htmlFor="review-sort">Sort reviews</label><select id="review-sort" onChange={(event) => chooseFilter(event.target.value)} value={sort}><option value="mostRecent">Newest first</option><option value="mostHelpful">Most helpful</option><option value="highestRating">Highest rating</option><option value="lowestRating">Lowest rating</option></select><button className={`reviews-filter-button${activeTag ? " active" : ""}`} onClick={() => chooseTag(activeTag || "Gameplay")} type="button"><span aria-hidden="true">☷</span> {activeTag ? `#${activeTag}` : "Filters"}</button></div>
+      <div className="review-layout"><aside className="review-aside"><h2>Discover reviews</h2>{filters.map((item) => <button className={sort === item.sort ? "active" : ""} key={item.sort} onClick={() => chooseFilter(item.sort)} type="button">{item.label}{item.sort === "mostRecent" ? <span>{total.toLocaleString()}</span> : null}</button>)}<hr /><label>Popular tags</label>{popularTags.map((tag) => <button className={activeTag === tag ? "active" : ""} key={tag} onClick={() => chooseTag(tag)} type="button">#{tag}</button>)}</aside>
+        <section className="review-feed" aria-label="Community review feed"><div className="feed-head"><span><b>{reviewCountLabel}</b></span></div>{loading ? <div className="empty-state" role="status"><h2>Loading reviews…</h2><p>Fetching the latest community takes.</p></div> : error ? <div className="empty-state"><h2>Reviews unavailable</h2><p>{error}</p></div> : reviews.map((review) => { const author = authorOf(review); const game = gameOf(review); const reviewId = idOf(review.id || review._id) || `${review.createdAt}-${review.title}`; const gameId = idOf(review.gameId); const initials = (author?.displayName || author?.username || "Player").slice(0, 2).toUpperCase(); const selectedVote = votes[reviewId]; return <article className="review-card" key={reviewId}><div className="review-top"><Link className="reviewer" to={author?.username ? `/profile?username=${encodeURIComponent(author.username)}` : "#"}><span className="avatar">{author?.avatarUrl ? <img src={author.avatarUrl} alt="" /> : initials}</span><span><b>{author?.displayName || author?.username || "Player"}</b><small>{author?.username ? `@${author.username}` : "Community member"}</small></span></Link><span className="review-time">{new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(review.createdAt))}</span></div><div className="review-game">{game?.coverImageUrl ? <img src={game.coverImageUrl} alt="" /> : <span className="review-cover-fallback" aria-hidden="true" />}{gameId ? <Link to={`/games/${gameId}/reviews`}>{game?.title || "Unavailable game"}</Link> : <span>{game?.title || "Unavailable game"}</span>}<span className="rating">★ {review.rating.toFixed(1)}</span></div><h2>{review.title}</h2><p>{review.content}</p>{review.tags?.length ? <div className="review-tags" aria-label="Review tags">{[...new Set(review.tags.filter(Boolean))].map((tag) => <button className={activeTag.toLowerCase() === tag.toLowerCase() ? "active" : ""} key={tag} onClick={() => chooseTag(tag)} type="button">{tag}</button>)}</div> : null}<div className="review-actions"><button aria-label="Helpful" aria-pressed={selectedVote === "helpful"} className={selectedVote === "helpful" ? "active" : ""} disabled={Boolean(voting[reviewId])} onClick={() => void vote(review, "helpful")} type="button">☺ <span className="reaction-label">Helpful</span></button><button aria-label="Not helpful" aria-pressed={selectedVote === "notHelpful"} className={selectedVote === "notHelpful" ? "active" : ""} disabled={Boolean(voting[reviewId])} onClick={() => void vote(review, "notHelpful")} type="button">☹ <span className="reaction-label">Not helpful</span></button>{gameId ? <Link to={`/games/${gameId}/reviews`}>Read full review <span aria-hidden="true">→</span></Link> : null}</div></article>; })}{!loading && !error && reviews.length === 0 ? <div className="empty-state"><h2>No reviews match your filters</h2><p>Try another search term or select a different tag.</p><button className="btn secondary" onClick={() => { setQuery(""); setActiveQuery(""); setActiveTag(""); setPage(1); }} type="button">Clear filters</button></div> : null}{!loading && !error && totalPages > 1 ? <div className="review-pagination"><button className="btn secondary" disabled={page === 1} onClick={() => setPage((current) => current - 1)} type="button">Previous</button><span>Page {page} of {totalPages}</span><button className="btn secondary" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)} type="button">Next</button></div> : null}</section></div>
     </main>
-  );
+    {modalOpen ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submitting) setModalOpen(false); }}><section aria-labelledby="write-review-title" aria-modal="true" className="add-game-modal review-composer" role="dialog"><header className="add-game-modal-header"><div><span className="eyebrow">Share your take</span><h2 id="write-review-title">Write a review</h2><p>Your review will be published to the selected game.</p></div><button aria-label="Close" className="modal-close" disabled={submitting} onClick={() => setModalOpen(false)} type="button">×</button></header><form className="add-game-form" onSubmit={(event) => void submitReview(event)}><label>Game <input onChange={(event) => { setGameQuery(event.target.value); setSelectedGame(null); }} placeholder="Search for a game…" value={selectedGame?.title || gameQuery} />{gameLoading ? <small className="form-status">Searching…</small> : null}{gameError ? <small className="form-error">{gameError}</small> : null}{gameQuery && !selectedGame && !gameLoading ? <div className="game-search-results">{gameResults.length ? gameResults.map((game) => <button key={game._id || game.id} onClick={() => { setSelectedGame(game); setGameQuery(""); setGameResults([]); }} type="button">{game.coverImageUrl ? <img src={game.coverImageUrl} alt="" /> : <span className="review-cover-fallback" aria-hidden="true" />}<span>{game.title}</span></button>) : <span className="form-status">No games match that search.</span>}</div> : null}</label><label>Title<input maxLength={160} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} placeholder="Give your review a title" required value={form.title} /></label><label>Your review<textarea maxLength={10000} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} placeholder="What should other players know?" required rows={6} value={form.content} /></label><fieldset className="genre-picker"><legend>Rating <span className="rating-value">{form.rating || "Choose 1–10"}</span></legend><div>{Array.from({ length: 10 }, (_, index) => index + 1).map((rating) => <button className={form.rating === rating ? "selected" : ""} key={rating} onClick={() => setForm((current) => ({ ...current, rating }))} type="button">{rating}</button>)}</div></fieldset><fieldset className="genre-picker"><legend>Review tags</legend><div>{popularTags.map((tag) => <button className={form.tags.includes(tag) ? "selected" : ""} key={tag} onClick={() => setForm((current) => ({ ...current, tags: current.tags.includes(tag) ? current.tags.filter((item) => item !== tag) : [...current.tags, tag] }))} type="button">{tag}</button>)}</div></fieldset>{submitError ? <p className="form-error" role="alert">{submitError}</p> : null}<div className="add-game-actions"><button className="modal-cancel" disabled={submitting} onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="btn" disabled={submitting || !selectedGame} type="submit">{submitting ? "Publishing…" : "Publish review"}</button></div></form></section></div> : null}
+  </>;
 }
 
 export default AllReviewsPage;
